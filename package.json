@@ -1,0 +1,9 @@
+{
+  "name": "chapter0-online",
+  "version": "2.2.0",
+  "description": "괜찮아, 너는 충분해 · 챕터 0 (함께 걷는 밤) 실시간 서버",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" },
+  "license": "MIT"
+}
