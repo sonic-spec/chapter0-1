@@ -18,12 +18,17 @@ const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const EMOTES = ["😊", "😢", "😂", "👍", "🔥", "👏"];
 
 const indexHtml = fs.readFileSync(path.join(__dirname, "index.html"));
-const bgmPath = path.join(__dirname, "bgm.mp3");
-const hasBgm = fs.existsSync(bgmPath);
-const bgmBuf = hasBgm ? fs.readFileSync(bgmPath) : null;
+const bgmCandidates = ["bgm.mp3", "Library _ Suno - Chrome 2026-11-19 13-35-54.mp3"];
+let bgmBuf = null;
+for (const name of bgmCandidates) {
+  const full = path.join(__dirname, name);
+  if (fs.existsSync(full)) {
+    bgmBuf = fs.readFileSync(full);
+    break;
+  }
+}
 
-const clients = new Map();        // id -> client
-// 고민상담소 상태: boothId -> { ownerId: string | null, ownerName: string | null }
+const clients = new Map();
 const booths = {
   b1: { id: "b1", x: 1200, ownerId: null, ownerName: null },
   b2: { id: "b2", x: 2700, ownerId: null, ownerName: null }
@@ -63,7 +68,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
     res.end(indexHtml);
   } else if (url === "/bgm.mp3") {
-    if (!hasBgm || !bgmBuf) {
+    if (!bgmBuf) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("bgm not found");
       return;
@@ -217,7 +222,6 @@ function handle(c, m) {
     send(c, payload);
     const ownerClient = clients.get(b.ownerId);
     if (ownerClient && ownerClient.id !== c.id) send(ownerClient, payload);
-    // 상담소 근처 다른 방문자에게도 상담창 대화 표시
     for (const other of clients.values()) {
       if (other.joined && other.id !== c.id && other.id !== b.ownerId && Math.abs(other.x - b.x) < 160) {
         send(other, payload);
@@ -226,7 +230,6 @@ function handle(c, m) {
   }
 }
 
-// 위치 스냅샷: [id, x, y, f, w, name, col, sit]
 setInterval(() => {
   if (!dirty) return;
   dirty = false;
