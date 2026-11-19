@@ -1,4 +1,4 @@
-// 챕터 0 · 함께 걷는 밤 — 의존성 없는 실시간 서버 (Node.js 18+)
+// 챕터 0 · 함께 걷는 밤 — 의존성 없는 실시간 서버 (Node.js 18+) v2.3
 // 실행: node server.js   (PORT 환경변수가 있으면 그 포트, 없으면 3000)
 "use strict";
 const http = require("http");
@@ -7,17 +7,27 @@ const path = require("path");
 const crypto = require("crypto");
 
 const PORT = process.env.PORT || 3000;
-const MAX_PLAYERS = +process.env.MAX_PLAYERS || 60;      // 동시 접속 제한
-const MAX_PAYLOAD = 1024;                                // 메시지 최대 바이트
-const SAY_GAP_MS = 800;                                  // 말풍선 최소 간격
+const MAX_PLAYERS = +process.env.MAX_PLAYERS || 60;
+const MAX_PAYLOAD = 2048;
+const SAY_GAP_MS = 800;
+const EMOTE_GAP_MS = 600;
 const SPAM_LIMIT = 8, SPAM_WINDOW_MS = 20000, MUTE_MS = 30000;
 const WORLD_W = 4200, WORLD_H = 600;
-// 금칙어 목록: 필요한 단어를 직접 추가·삭제하세요.
 const BAD_WORDS = ["씨발", "시발", "병신", "개새끼", "ㅅㅂ", "ㅂㅅ", "좆", "섹스"];
 const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const EMOTES = ["😊", "😢", "😂", "👍", "🔥", "👏"];
 
 const indexHtml = fs.readFileSync(path.join(__dirname, "index.html"));
+const bgmPath = path.join(__dirname, "bgm.mp3");
+const hasBgm = fs.existsSync(bgmPath);
+const bgmBuf = hasBgm ? fs.readFileSync(bgmPath) : null;
+
 const clients = new Map();        // id -> client
+// 고민상담소 상태: boothId -> { ownerId: string | null, ownerName: string | null }
+const booths = {
+  b1: { id: "b1", x: 1200, ownerId: null, ownerName: null },
+  b2: { id: "b2", x: 2700, ownerId: null, ownerName: null }
+};
 let dirty = false;
 
 const clean = (v, n) => String(v == null ? "" : v)
@@ -28,12 +38,43 @@ const maskBad = (t) => {
 };
 const num = (v, lo, hi, d) => (Number.isFinite(+v) ? Math.max(lo, Math.min(hi, +v)) : d);
 
+function boothSnapshot() {
+  return Object.values(booths).map((b) => ({
+    id: b.id, x: b.x, ownerId: b.ownerId, ownerName: b.ownerName
+  }));
+}
+
+function releaseBoothsBy(clientId) {
+  let changed = false;
+  for (const b of Object.values(booths)) {
+    if (b.ownerId === clientId) {
+      b.ownerId = null;
+      b.ownerName = null;
+      changed = true;
+    }
+  }
+  if (changed) broadcast({ t: "booths", booths: boothSnapshot() });
+}
+
 // ---------- HTTP ----------
 const server = http.createServer((req, res) => {
   const url = (req.url || "/").split("?")[0];
   if (url === "/" || url === "/index.html") {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
     res.end(indexHtml);
+  } else if (url === "/bgm.mp3") {
+    if (!hasBgm || !bgmBuf) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("bgm not found");
+      return;
+    }
+    res.writeHead(200, {
+      "Content-Type": "audio/mpeg",
+      "Content-Length": bgmBuf.length,
+      "Accept-Ranges": "bytes",
+      "Cache-Control": "public, max-age=3600"
+    });
+    res.end(bgmBuf);
   } else if (url === "/healthz") {
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end("ok " + clients.size);
@@ -43,7 +84,7 @@ const server = http.createServer((req, res) => {
   }
 });
 
-// ---------- WebSocket (RFC 6455 최소 구현: 텍스트/핑/종료) ----------
+// ---------- WebSocket (RFC 6455 최소 구현) ----------
 function frame(opcode, payload) {
   const body = Buffer.isBuffer(payload) ? payload : Buffer.from(payload);
   const len = body.length;
@@ -61,7 +102,12 @@ function drop(c, code) {
   c.dead = true;
   try { if (code) c.socket.write(frame(0x8, Buffer.from([code >> 8, code & 255]))); } catch (e) {}
   try { c.socket.end(); c.socket.destroy(); } catch (e) {}
-  if (clients.delete(c.id) && c.joined) { dirty = true; broadcast({ t: "leave", id: c.id }); }
+  const wasJoined = c.joined;
+  if (clients.delete(c.id) && wasJoined) {
+    releaseBoothsBy(c.id);
+    dirty = true;
+    broadcast({ t: "leave", id: c.id });
+  }
 }
 function broadcast(obj) { for (const c of clients.values()) if (c.joined) send(c, obj); }
 
@@ -75,8 +121,11 @@ server.on("upgrade", (req, socket) => {
   socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n");
   socket.setNoDelay(true);
 
-  const c = { id: crypto.randomBytes(4).toString("hex"), socket, buf: Buffer.alloc(0), joined: false, dead: false,
-    n: "", col: 0, x: 260, y: 0, f: 1, w: 0, lastSay: 0, sayTimes: [], mutedUntil: 0, alive: true };
+  const c = {
+    id: crypto.randomBytes(4).toString("hex"), socket, buf: Buffer.alloc(0),
+    joined: false, dead: false, n: "", col: 0, x: 260, y: 0, f: 1, w: 0, sit: -1,
+    lastSay: 0, lastEmote: 0, sayTimes: [], mutedUntil: 0, alive: true
+  };
   clients.set(c.id, c);
   socket.on("data", (d) => {
     c.buf = Buffer.concat([c.buf, d]);
@@ -88,7 +137,6 @@ server.on("upgrade", (req, socket) => {
   socket.on("close", () => drop(c));
 });
 
-// 한 프레임을 읽어 {op, text}로 반환. 아직 덜 왔으면 null.
 function parse(c) {
   const b = c.buf;
   if (b.length < 2) return null;
@@ -116,12 +164,23 @@ function handle(c, m) {
     c.n = maskBad(clean(o.n, 10)) || "나그네" + (100 + Math.floor(Math.random() * 900));
     c.col = num(o.c, 0, 7, 0) | 0;
     c.joined = true; dirty = true;
-    send(c, { t: "hello", id: c.id, online: clients.size });
+    send(c, { t: "hello", id: c.id, online: clients.size, booths: boothSnapshot() });
   } else if (!c.joined) {
     return;
   } else if (o.t === "pos") {
-    c.x = num(o.x, 0, WORLD_W, c.x); c.y = num(o.y, 0, WORLD_H, c.y);
-    c.f = o.f === -1 ? -1 : 1; c.w = o.w ? 1 : 0; dirty = true;
+    c.x = num(o.x, 0, WORLD_W, c.x);
+    c.y = num(o.y, 0, WORLD_H, c.y);
+    c.f = o.f === -1 ? -1 : 1;
+    c.w = o.w ? 1 : 0;
+    c.sit = Number.isInteger(o.sit) ? o.sit : -1;
+    dirty = true;
+  } else if (o.t === "emote") {
+    const now = Date.now();
+    if (now - c.lastEmote < EMOTE_GAP_MS) return;
+    const idx = Number.isInteger(o.idx) ? o.idx : -1;
+    if (idx < 0 || idx >= EMOTES.length) return;
+    c.lastEmote = now;
+    broadcast({ t: "emote", id: c.id, e: EMOTES[idx] });
   } else if (o.t === "say") {
     const now = Date.now();
     if (now < c.mutedUntil) return send(c, { t: "warn", m: "잠시 쉬어가요. 조금 뒤에 다시 말할 수 있어요." });
@@ -134,19 +193,48 @@ function handle(c, m) {
       return send(c, { t: "warn", m: "보낼 수 없는 말이에요." });
     c.lastSay = now;
     broadcast({ t: "say", id: c.id, m: text });
+  } else if (o.t === "booth_toggle") {
+    const b = booths[String(o.id || "")];
+    if (!b || Math.abs(c.x - b.x) > 120) return;
+    if (!b.ownerId) {
+      releaseBoothsBy(c.id);
+      b.ownerId = c.id;
+      b.ownerName = c.n;
+      broadcast({ t: "booths", booths: boothSnapshot() });
+    } else if (b.ownerId === c.id) {
+      b.ownerId = null;
+      b.ownerName = null;
+      broadcast({ t: "booths", booths: boothSnapshot() });
+    }
+  } else if (o.t === "booth_msg") {
+    const b = booths[String(o.id || "")];
+    if (!b || !b.ownerId) return;
+    const text = clean(o.m, 120);
+    if (!text) return;
+    if (/https?:|www\.|\.(com|net|kr|io|me)\b/i.test(text) || maskBad(text) === null)
+      return send(c, { t: "warn", m: "보낼 수 없는 말이에요." });
+    const payload = { t: "booth_msg", boothId: b.id, fromId: c.id, fromName: c.n, m: text };
+    send(c, payload);
+    const ownerClient = clients.get(b.ownerId);
+    if (ownerClient && ownerClient.id !== c.id) send(ownerClient, payload);
+    // 상담소 근처 다른 방문자에게도 상담창 대화 표시
+    for (const other of clients.values()) {
+      if (other.joined && other.id !== c.id && other.id !== b.ownerId && Math.abs(other.x - b.x) < 160) {
+        send(other, payload);
+      }
+    }
   }
 }
 
-// 위치 스냅샷: 변화가 있을 때만 초당 약 15회 전송
+// 위치 스냅샷: [id, x, y, f, w, name, col, sit]
 setInterval(() => {
   if (!dirty) return;
   dirty = false;
   const p = [];
-  for (const c of clients.values()) if (c.joined) p.push([c.id, Math.round(c.x), Math.round(c.y), c.f, c.w, c.n, c.col]);
+  for (const c of clients.values()) if (c.joined) p.push([c.id, Math.round(c.x), Math.round(c.y), c.f, c.w, c.n, c.col, c.sit]);
   broadcast({ t: "s", p });
 }, 66);
 
-// 연결 점검: 30초마다 핑, 응답 없으면 끊기 (무료 호스팅의 유휴 연결 끊김도 방지)
 setInterval(() => {
   for (const c of clients.values()) {
     if (!c.alive) { drop(c, 1001); continue; }
@@ -156,6 +244,6 @@ setInterval(() => {
 }, 30000);
 
 if (require.main === module) {
-  server.listen(PORT, "0.0.0.0", () => console.log("챕터 0 서버 실행 중 → 포트 " + PORT));
+  server.listen(PORT, "0.0.0.0", () => console.log("챕터 0 v2.3 서버 실행 중 → 포트 " + PORT));
 }
 module.exports = { server };
