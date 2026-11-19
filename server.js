@@ -30,8 +30,11 @@ for (const name of bgmCandidates) {
 
 const clients = new Map();
 const booths = {
-  b1: { id: "b1", x: 1200, ownerId: null, ownerName: null },
-  b2: { id: "b2", x: 2700, ownerId: null, ownerName: null }
+  b1: { id: "b1", x: 680, ownerId: null, ownerName: null },
+  b2: { id: "b2", x: 1200, ownerId: null, ownerName: null },
+  b3: { id: "b3", x: 1950, ownerId: null, ownerName: null },
+  b4: { id: "b4", x: 2700, ownerId: null, ownerName: null },
+  b5: { id: "b5", x: 3450, ownerId: null, ownerName: null }
 };
 let dirty = false;
 
