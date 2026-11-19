@@ -14,7 +14,11 @@ canvas{display:block;width:100%;height:100%;touch-action:none}
 .chip{position:fixed;top:calc(10px + env(safe-area-inset-top,0px));left:10px;background:var(--panel);border:1px solid var(--line);padding:8px 12px;font-size:13px;line-height:1.5}
 .chip b{display:block;font-size:14px}.chip span{color:var(--mute)}
 #bgmBtn{position:fixed;top:calc(10px + env(safe-area-inset-top,0px));right:10px;background:var(--panel);color:var(--ink);border:1px solid var(--line);padding:8px 12px;font-size:12px;cursor:pointer}
-#hint{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(64px + env(safe-area-inset-bottom,0px));color:var(--mute);font-size:12px;background:var(--panel);padding:4px 10px;border:1px solid var(--line);white-space:nowrap}
+#emoteBar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(96px + env(safe-area-inset-bottom,0px));display:flex;flex-wrap:wrap;justify-content:center;gap:6px;background:var(--panel);border:1px solid var(--line);padding:6px 10px;max-width:94vw;z-index:8}
+.emChip{background:#120f24;color:var(--ink);border:1px solid #3c335c;padding:4px 8px;font-size:12px;display:inline-flex;align-items:center;gap:4px;cursor:pointer}
+.emChip:hover{border-color:var(--accent)}
+.emChip kbd{background:#2a2444;color:#ffe27a;border-radius:3px;padding:1px 4px;font-size:11px;font-family:inherit}
+#hint{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(62px + env(safe-area-inset-bottom,0px));color:var(--mute);font-size:12px;background:var(--panel);padding:4px 10px;border:1px solid var(--line);white-space:nowrap}
 #chat{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom,0px));display:none;gap:6px;width:min(480px,94vw);z-index:10}
 #chat input{flex:1;min-width:0;background:var(--panel);color:var(--ink);border:1px solid var(--accent);padding:10px;font-size:15px;font-family:inherit}
 button{background:var(--panel);color:var(--ink);border:1px solid var(--accent);padding:10px 14px;font-size:15px;font-family:inherit;cursor:pointer}
@@ -24,8 +28,8 @@ button{background:var(--panel);color:var(--ink);border:1px solid var(--accent);p
 #join input{width:100%;box-sizing:border-box;background:#0b0a16;color:var(--ink);border:1px solid var(--line);padding:10px;font-size:15px;margin-bottom:10px;text-align:center;font-family:inherit}
 #pad{position:fixed;left:0;right:0;bottom:calc(12px + env(safe-area-inset-bottom,0px));display:none;justify-content:space-between;padding:0 12px;pointer-events:none;z-index:9}
 #pad div{display:flex;gap:8px;pointer-events:auto}#pad button{width:52px;height:52px;padding:0;font-size:20px;user-select:none;touch-action:none}
-#emoteTray{position:fixed;right:12px;bottom:calc(74px + env(safe-area-inset-bottom,0px));display:none;flex-wrap:wrap;gap:6px;max-width:210px;background:var(--panel);border:1px solid var(--accent);padding:8px;z-index:12}
-#emoteTray button{width:54px;height:46px;padding:0;font-size:18px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px}
+#emoteTray{position:fixed;right:12px;bottom:calc(74px + env(safe-area-inset-bottom,0px));display:none;flex-wrap:wrap;gap:6px;max-width:220px;background:var(--panel);border:1px solid var(--accent);padding:8px;z-index:12}
+#emoteTray button{width:62px;height:52px;padding:0;font-size:18px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
 #emoteTray button small{font-size:10px;color:var(--mute)}
 #boothModal{position:fixed;inset:0;display:none;place-items:center;background:#05040d99;padding:16px;z-index:25}
 #boothBox{background:var(--panel);border:1px solid var(--accent);width:min(440px,100%);padding:16px;display:flex;flex-direction:column;gap:10px}
@@ -35,13 +39,14 @@ button{background:var(--panel);color:var(--ink);border:1px solid var(--accent);p
 .bmsg b{color:#ffe27a;margin-right:6px}
 #boothForm{display:flex;gap:6px}
 #boothInput{flex:1;min-width:0;background:#0b0a16;color:var(--ink);border:1px solid var(--line);padding:8px 10px;font-size:14px;font-family:inherit}
-@media (pointer:coarse){#pad{display:flex}#hint{display:none}}
+@media (pointer:coarse){#pad{display:flex}#hint,#emoteBar{display:none}}
 </style>
 </head>
 <body>
 <canvas id="cv"></canvas>
 <div class="chip"><b>함께 걷는 밤 · v2.3</b><span id="st">입장하면 연결돼요</span></div>
 <button id="bgmBtn" type="button">♪ BGM 켬</button>
+<div id="emoteBar"></div>
 <div id="hint">← → 이동 · ↑ 점프 · Enter 말풍선 · 1~6 이모티콘 · E 벤치/상담소</div>
 <div id="chat"><input id="ci" maxlength="40" placeholder="말풍선으로 보낼 말 (Enter 전송 · Esc 취소)" autocomplete="off"><button id="cs">전송</button></div>
 <div id="emoteTray"></div>
@@ -86,26 +91,72 @@ var EMOTE_LIST=[
   {key:"6",icon:"👏",label:"박수"}
 ];
 
-// BGM (공백 최소화 심리스 루프)
-var bgm=new Audio("/bgm.mp3"),bgmEnabled=true,bgmStarted=false;
-bgm.loop=true;bgm.preload="auto";bgm.volume=0.45;
+// BGM (MP3 우선 재생 + 실패 시 Web Audio 밤 앰비언트 폴백)
+var bgm=new Audio("/bgm.mp3"),bgmEnabled=true,bgmPlaying=false,useSynthBgm=false,synthTimer=null,actx=null;
+bgm.loop=true;bgm.preload="auto";bgm.volume=0.5;
 bgm.addEventListener("timeupdate",function(){
   if(bgm.duration && bgm.duration - bgm.currentTime < 0.06){
     try{bgm.currentTime=0}catch(e){}
   }
 });
+bgm.addEventListener("error",function(){
+  useSynthBgm=true;
+  if(bgmEnabled&&!bgmPlaying)startSynthBgm();
+});
+
+function startSynthBgm(){
+  if(synthTimer)return;
+  var AC=window.AudioContext||window.webkitAudioContext;
+  if(!AC)return;
+  if(!actx)actx=new AC();
+  if(actx.state==="suspended")actx.resume().catch(function(){});
+  bgmPlaying=true;updateBgmBtn();
+  var notes=[261.63,329.63,392.00,493.88,220.00,261.63,329.63,392.00,174.61,220.00,261.63,349.23,196.00,246.94,293.66,392.00];
+  var step=0;
+  function playStep(){
+    if(!bgmEnabled||!useSynthBgm)return;
+    var now=actx.currentTime;
+    var osc=actx.createOscillator(),gain=actx.createGain();
+    osc.type="sine";
+    osc.frequency.setValueAtTime(notes[step%notes.length],now);
+    gain.gain.setValueAtTime(0.0001,now);
+    gain.gain.exponentialRampToValueAtTime(0.035,now+0.12);
+    gain.gain.exponentialRampToValueAtTime(0.0001,now+0.95);
+    osc.connect(gain);gain.connect(actx.destination);
+    osc.start(now);osc.stop(now+1.0);
+    step++;
+  }
+  playStep();
+  synthTimer=setInterval(playStep,650);
+}
+function stopSynthBgm(){
+  if(synthTimer){clearInterval(synthTimer);synthTimer=null}
+}
+
 function tryStartBgm(){
-  if(!bgmEnabled||bgmStarted)return;
-  bgm.play().then(function(){bgmStarted=true;updateBgmBtn()}).catch(function(){});
+  if(!bgmEnabled)return;
+  if(useSynthBgm){startSynthBgm();return}
+  var p=bgm.play();
+  if(p&&typeof p.then==="function"){
+    p.then(function(){bgmPlaying=true;updateBgmBtn()}).catch(function(){
+      useSynthBgm=true;startSynthBgm();
+    });
+  }else{
+    bgmPlaying=true;updateBgmBtn();
+  }
 }
 function updateBgmBtn(){
   var b=document.getElementById("bgmBtn");
-  b.textContent=bgmEnabled?"♪ BGM 켬":"♪ BGM 꺼짐";
+  if(!bgmEnabled){b.textContent="♪ BGM 꺼짐";return}
+  b.textContent=useSynthBgm?"♪ BGM 켬 (내장선율)":"♪ BGM 켬";
 }
 document.getElementById("bgmBtn").addEventListener("click",function(){
   bgmEnabled=!bgmEnabled;
-  if(bgmEnabled){bgm.play().then(function(){bgmStarted=true}).catch(function(){})}
-  else{bgm.pause();bgmStarted=false}
+  if(bgmEnabled){
+    tryStartBgm();
+  }else{
+    bgm.pause();stopSynthBgm();bgmPlaying=false;
+  }
   updateBgmBtn();
 });
 
@@ -196,7 +247,6 @@ function enter(){
 document.getElementById("go").onclick=enter;
 ni.addEventListener("keydown",function(e){if(e.key==="Enter")enter()});
 
-// 말풍선 채팅
 var chat=document.getElementById("chat"),ci=document.getElementById("ci");
 function openChat(){if(!joined||typing||activeBoothId)return;typing=true;chat.style.display="flex";ci.value="";ci.focus()}
 function closeChat(){typing=false;chat.style.display="none";ci.blur()}
@@ -208,16 +258,31 @@ function sendSay(){
 ci.addEventListener("keydown",function(e){e.stopPropagation();if(e.key==="Enter")sendSay();else if(e.key==="Escape")closeChat()});
 document.getElementById("cs").onclick=sendSay;
 
-// 이모티콘 발동 (PC 숫자키 + 모바일 이모티콘 탭)
+// 이모티콘 목록 바(PC) & 이모티콘 탭 트레이(모바일)
 function triggerEmote(idx){
   if(!joined||idx<0||idx>=EMOTE_LIST.length)return;
   tryStartBgm();
   P.emote=EMOTE_LIST[idx].icon;P.et=2.4;
   if(ws&&ws.readyState===1)ws.send(JSON.stringify({t:"emote",idx:idx}));
 }
+
+var emoteBar=document.getElementById("emoteBar");
 var emoteTray=document.getElementById("emoteTray");
 EMOTE_LIST.forEach(function(item,idx){
-  var btn=document.createElement("button");btn.type="button";
+  // PC용 하단 이모티콘 안내/클릭 바
+  var chip=document.createElement("button");
+  chip.type="button";
+  chip.className="emChip";
+  chip.innerHTML="<kbd>"+item.key+"</kbd><span>"+item.icon+"</span><span>"+item.label+"</span>";
+  chip.addEventListener("click",function(e){
+    e.stopPropagation();
+    triggerEmote(idx);
+  });
+  emoteBar.appendChild(chip);
+
+  // 모바일용 탭 메뉴 안 항목
+  var btn=document.createElement("button");
+  btn.type="button";
   btn.innerHTML="<span>"+item.icon+"</span><small>"+item.key+"·"+item.label+"</small>";
   btn.addEventListener("click",function(e){
     e.stopPropagation();
@@ -226,20 +291,20 @@ EMOTE_LIST.forEach(function(item,idx){
   });
   emoteTray.appendChild(btn);
 });
+
 document.getElementById("bem").addEventListener("click",function(e){
   e.stopPropagation();
   if(!joined)return;
+  tryStartBgm();
   emoteTray.style.display=(emoteTray.style.display==="flex")?"none":"flex";
 });
 document.addEventListener("click",function(e){
   if(!emoteTray.contains(e.target)&&e.target.id!=="bem")emoteTray.style.display="none";
 });
 
-// 벤치 착석 & 고민상담소 상호작용
 function interactNearby(){
   if(!joined||typing||activeBoothId)return;
   tryStartBgm();
-  // 1) 고민상담소 확인
   for(var i=0;i<booths.length;i++){
     var b=booths[i];
     if(Math.abs(P.x-b.x)<=95){
@@ -247,17 +312,12 @@ function interactNearby(){
         if(ws&&ws.readyState===1)ws.send(JSON.stringify({t:"booth_toggle",id:b.id}));
         toast=(P.name+"님의 고민상담소를 열었어요");toastT=2.5;
         return;
-      }else if(b.ownerId===myId){
-        // 내 상담소일 때: 대화창을 열거나 퇴실 선택 가능(Shift+E로 퇴실, 기본은 대화창 열기)
-        openBoothModal(b);
-        return;
       }else{
         openBoothModal(b);
         return;
       }
     }
   }
-  // 2) 벤치 앉기 / 일어나기
   if(P.sit>=0){
     P.sit=-1;dirty=true;toast="벤치에서 일어났어요";toastT=1.5;return;
   }
@@ -291,8 +351,7 @@ addEventListener("keydown",function(e){
   if(e.key==="Enter"){e.preventDefault();openChat();return}
   if(e.key==="e"||e.key==="E"){
     e.preventDefault();
-    if(e.shiftKey&&P.name){
-      // 내 상담소 닫기 단축키
+    if(e.shiftKey){
       for(var i=0;i<booths.length;i++){
         if(Math.abs(P.x-booths[i].x)<=95&&booths[i].ownerId===myId){
           if(ws&&ws.readyState===1)ws.send(JSON.stringify({t:"booth_toggle",id:booths[i].id}));
@@ -357,15 +416,11 @@ function char(x,y,c,f,ph,name,msg,bt,emote,et,sit,me){
 function drawBooths(){
   booths.forEach(function(b){
     var x=b.x-cam;if(x<-180||x>vw+180)return;
-    // 상담소 부스 외형
     g.fillStyle="#241e42";g.strokeStyle="#8f7bd6";g.lineWidth=2;
     g.fillRect(x-46,GY-92,92,92);g.strokeRect(x-46,GY-92,92,92);
-    // 지붕
     g.fillStyle="#3b2f63";g.beginPath();g.moveTo(x-56,GY-92);g.lineTo(x,GY-124);g.lineTo(x+56,GY-92);g.closePath();g.fill();g.stroke();
-    // 따뜻한 등불 창문
     g.fillStyle=b.ownerId?"#ffe27a88":"#f2d79a44";
     g.fillRect(x-28,GY-68,22,26);g.fillRect(x+6,GY-68,22,26);
-    // 상단 명칭 ("고민상담소" 또는 "(닉네임)님의 고민상담소")
     var label=b.ownerName?(b.ownerName+"님의 고민상담소"):"고민상담소";
     g.font="bold 13px sans-serif";
     var w=g.measureText(label).width+20;
